@@ -2,83 +2,97 @@ import streamlit as st
 from fpdf import FPDF
 import pandas as pd
 
-st.set_page_config(page_title="ProInvoice Generator", page_icon="📄")
+st.set_page_config(page_title="ProInvoice", page_icon="📄")
 
-st.title("📄 Professional Invoice Generator")
-st.subheader("Create and download your invoice in seconds.")
+# --- DATA INITIALIZATION ---
+# This prevents the ValueError by ensuring the data structure exists
+if 'invoice_items' not in st.session_state:
+    st.session_state.invoice_items = pd.DataFrame([
+        {"Description": "Service 1", "Hours": 1.0, "Rate": 50.0}
+    ])
 
-# --- SIDEBAR INPUTS ---
-st.sidebar.header("Your Business Info")
-biz_name = st.sidebar.text_input("Business Name", "Your Company Name")
-biz_email = st.sidebar.text_input("Business Email", "email@example.com")
+st.title("📄 ProInvoice Generator")
 
-st.sidebar.header("Client Info")
+# --- SIDEBAR ---
+st.sidebar.header("Business Details")
+biz_name = st.sidebar.text_input("Your Business Name", "My Company LLC")
+biz_email = st.sidebar.text_input("Your Email", "billing@company.com")
+
+st.sidebar.header("Client Details")
 client_name = st.sidebar.text_input("Client Name", "Client Co.")
-invoice_date = st.sidebar.date_input("Invoice Date")
 
-# --- ITEM TABLE ---
-st.write("### Line Items")
-if 'items' not in st.session_state:
-    st.session_state.items = [{"Description": "Consulting", "Hours": 1.0, "Rate": 50.0}]
+# --- MAIN INTERFACE ---
+st.write("### Edit Invoice Items")
+st.info("Double-click a cell to edit. Use the empty row at the bottom to add more.")
 
-df = pd.DataFrame(st.session_state.items)
-edited_df = st.data_editor(df, num_rows="dynamic")
-
-# Calculations
-subtotal = (edited_df['Hours'] * edited_df['Rate']).sum()
-tax_rate = st.number_input("Tax Rate (%)", value=0.0)
-tax_amount = subtotal * (tax_rate / 100)
-total = subtotal + tax_amount
-
-st.write(f"**Subtotal:** ${subtotal:,.2f}")
-st.write(f"**Total Due:** ${total:,.2f}")
-
-# --- PDF GENERATION ---
-def generate_pdf():
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 10, txt=biz_name, ln=True, align='L')
-    pdf.set_font("Arial", size=10)
-    pdf.cell(200, 10, txt=f"Email: {biz_email}", ln=True)
-    pdf.ln(10)
-    
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, txt=f"Bill To: {client_name}", ln=True)
-    pdf.cell(200, 10, txt=f"Date: {invoice_date}", ln=True)
-    pdf.ln(10)
-
-    # Table Header
-    pdf.cell(90, 10, "Description", border=1)
-    pdf.cell(30, 10, "Hours", border=1)
-    pdf.cell(30, 10, "Rate", border=1)
-    pdf.cell(30, 10, "Total", border=1)
-    pdf.ln(10)
-
-    # Table Rows
-    pdf.set_font("Arial", size=10)
-    for index, row in edited_df.iterrows():
-        pdf.cell(90, 10, str(row['Description']), border=1)
-        pdf.cell(30, 10, str(row['Hours']), border=1)
-        pdf.cell(30, 10, f"${row['Rate']}", border=1)
-        pdf.cell(30, 10, f"${row['Hours']*row['Rate']}", border=1)
-        pdf.ln(10)
-
-    pdf.ln(5)
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, txt=f"TOTAL DUE: ${total:,.2f}", ln=True, align='R')
-    
-    return pdf.output(dest='S').encode('latin-1')
-
-# --- DOWNLOAD BUTTON ---
-pdf_data = generate_pdf()
-st.download_button(
-    label="📩 Download Invoice PDF",
-    data=pdf_data,
-    file_name="invoice.pdf",
-    mime="application/pdf"
+# The actual editor
+edited_df = st.data_editor(
+    st.session_state.invoice_items, 
+    num_rows="dynamic",
+    use_container_width=True
 )
 
-# --- MONETIZATION SECTION ---
+# Calculation Logic
+subtotal = (edited_df['Hours'] * edited_df['Rate']).sum()
+tax_rate = st.number_input("Tax Rate (%)", value=0.0, step=1.0)
+tax_total = subtotal * (tax_rate / 100)
+grand_total = subtotal + tax_total
+
+st.write(f"**Grand Total:** ${grand_total:,.2f}")
+
+# --- PDF GENERATOR FUNCTION ---
+def create_pdf(df, biz, email, client, total_val):
+    pdf = FPDF()
+    pdf.add_page()
+    
+    # Header
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, biz, ln=True)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(0, 10, f"Contact: {email}", ln=True)
+    pdf.ln(10)
+    
+    # Client Info
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 10, f"Bill To: {client}", ln=True)
+    pdf.ln(5)
+    
+    # Table Header
+    pdf.set_fill_color(240, 240, 240)
+    pdf.cell(90, 10, "Description", border=1, fill=True)
+    pdf.cell(30, 10, "Hours", border=1, fill=True)
+    pdf.cell(30, 10, "Rate", border=1, fill=True)
+    pdf.cell(30, 10, "Total", border=1, fill=True)
+    pdf.ln()
+    
+    # Table Rows
+    pdf.set_font("Arial", size=10)
+    for _, row in df.iterrows():
+        pdf.cell(90, 10, str(row['Description']), border=1)
+        pdf.cell(30, 10, str(row['Hours']), border=1)
+        pdf.cell(30, 10, f"{row['Rate']}", border=1)
+        pdf.cell(30, 10, f"{row['Hours']*row['Rate']}", border=1)
+        pdf.ln()
+        
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 10, f"Grand Total: ${total_val:,.2f}", ln=True, align='R')
+    return pdf.output(dest='S').encode('latin-1')
+
+# --- DOWNLOAD ---
+if st.button("Generate & Download PDF"):
+    try:
+        pdf_bytes = create_pdf(edited_df, biz_name, biz_email, client_name, grand_total)
+        st.download_button(
+            label="Click here to save file",
+            data=pdf_bytes,
+            file_name="invoice.pdf",
+            mime="application/pdf"
+        )
+    except Exception as e:
+        st.error(f"Error generating PDF: {e}")
+
+# --- MONETIZATION ---
 st.markdown("---")
-st.info("💡 **Want to add your logo and remove the watermark?** [Click here to upgrade to Pro for $5](your-payment-link-here)")
+st.write("⭐ **Pro Tip:** Want to remove the generic font and add your logo?")
+st.link_button("Upgrade to Premium ($5)", "https://your-payment-link.com")
